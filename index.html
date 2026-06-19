@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>English Speech Player Pro (Native US)</title>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; max-width: 800px; margin: 20px auto; padding: 20px; background-color: #f0f2f5; color: #333; }
+        .container { background: white; padding: 30px; border-radius: 16px; box-shadow: 0 10px 25px rgba(0,0,0,0.05); }
+        textarea { width: 100%; height: 150px; padding: 15px; border: 2px solid #ddd; border-radius: 10px; font-size: 16px; margin-bottom: 20px; box-sizing: border-box; }
+        .controls { display: flex; align-items: center; gap: 15px; margin-bottom: 25px; flex-wrap: wrap; background: #f8f9fa; padding: 15px; border-radius: 10px; }
+        .speed-control { display: flex; align-items: center; gap: 8px; font-weight: bold; }
+        button { padding: 12px 24px; font-size: 16px; font-weight: bold; cursor: pointer; border: none; border-radius: 8px; transition: 0.2s; }
+        .btn-play { background-color: #2ecc71; color: white; }
+        .btn-stop { background-color: #e74c3c; color: white; }
+        .btn-reset { background-color: #7f8c8d; color: white; } /* リセットボタンのスタイルを追加 */
+        button:hover { opacity: 0.8; }
+        
+        #display-area { 
+            padding: 20px; border-radius: 10px; min-height: 100px; 
+            font-size: 24px; line-height: 1.6; background: #fff; border: 2px solid #eee;
+            cursor: pointer;
+            user-select: text;
+        }
+        .highlight { background-color: #fff176; color: #000; border-radius: 4px; }
+        .word-span:hover { text-decoration: underline; color: #3498db; }
+        .info { font-size: 12px; color: #666; margin-top: 10px; }
+        .selection-info { font-size: 13px; color: #3498db; margin-bottom: 10px; font-weight: bold; }
+        .voice-info { font-size: 11px; color: #999; margin-top: -15px; margin-bottom: 15px; text-align: right; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>English Speech Player Pro</h2>
+    <div id="voice-loaded" class="voice-info">Voice: Loading...</div>
+    <p class="info">※ 下の文字を<b>ドラッグして選択</b>すると、その部分だけ音声変化を維持してリピート再生できます。</p>
+    <div id="selection-status" class="selection-info"></div>
+    
+    <textarea id="text-input" oninput="initDisplay()">Success is not final, failure is not fatal: it is the courage to continue that counts.</textarea>
+
+    <div class="controls">
+        <button class="btn-play" onclick="handlePlay()">再生</button>
+        <button class="btn-stop" onclick="stopText()">停止</button>
+        <button class="btn-reset" onclick="resetText()">リセット</button> <div class="speed-control">
+            <span>速度: <span id="speed-val">100</span>%</span>
+            <input type="range" id="speed-range" min="0.1" max="1.5" step="0.05" value="1.0" oninput="document.getElementById('speed-val').innerText = Math.round(this.value * 100)">
+        </div>
+
+        <label><input type="checkbox" id="repeat-check"> リピート</label>
+    </div>
+
+    <div id="display-area"></div>
+</div>
+
+<script>
+    const synth = window.speechSynthesis;
+    const textInput = document.getElementById('text-input');
+    const displayArea = document.getElementById('display-area');
+    const repeatCheck = document.getElementById('repeat-check');
+    const statusLabel = document.getElementById('selection-status');
+    const voiceInfo = document.getElementById('voice-loaded');
+    
+    let isManualStop = false;
+    let selectedText = "";
+    let currentVoice = null;
+
+    // 最適なUS（アメリカ英語）音声を探す関数
+    function selectBestUSVoice() {
+        const voices = synth.getVoices();
+        if (voices.length === 0) return null;
+
+        const premiumUS = voices.find(v => v.lang === 'en-US' && (v.name.includes('Google') || v.name.includes('Natural') || v.name.includes('Aria')));
+        if (premiumUS) return premiumUS;
+
+        const standardUS = voices.find(v => v.lang === 'en-US');
+        if (standardUS) return standardUS;
+
+        const anyEnglish = voices.find(v => v.lang.startsWith('en'));
+        return anyEnglish || voices[0];
+    }
+
+    function updateVoiceStatus() {
+        currentVoice = selectBestUSVoice();
+        if (currentVoice) {
+            voiceInfo.innerText = `使用音声: ${currentVoice.name} (${currentVoice.lang})`;
+        } else {
+            voiceInfo.innerText = `使用音声: 標準OS音声`;
+        }
+    }
+
+    // 表示の初期化
+    function initDisplay() {
+        const text = textInput.value;
+        const words = text.split(/(\s+)/);
+        let charCount = 0;
+        
+        displayArea.innerHTML = words.map(word => {
+            const start = charCount;
+            charCount += word.length;
+            if (word.trim().length > 0) {
+                return `<span class="word-span" data-start="${start}">${word}</span>`;
+            }
+            return word;
+        }).join('');
+        
+        updateVoiceStatus();
+    }
+
+    // 音声リストの読み込み完了時（非同期対策）
+    if (typeof speechSynthesis !== 'undefined' && speechSynthesis.onvoiceschanged !== undefined) {
+        speechSynthesis.onvoiceschanged = () => {
+            updateVoiceStatus();
+        };
+    }
+
+    // ユーザーのテキスト選択を監視
+    document.addEventListener('selectionchange', () => {
+        const selection = window.getSelection().toString().trim();
+        if (selection) {
+            selectedText = selection;
+            statusLabel.innerText = "選択範囲をリピート対象に設定中...";
+        } else {
+            if (!synth.speaking) {
+                selectedText = "";
+                statusLabel.innerText = "";
+            }
+        }
+    });
+
+    function stopText() {
+        isManualStop = true;
+        synth.cancel();
+        clearHighlights();
+    }
+
+    // 新設：リセット関数
+    function resetText() {
+        stopText();                  // 再生中の音声を止める
+        textInput.value = "";        // テキストエリアを空にする
+        initDisplay();               // 表示エリアと単語データをクリアする
+        selectedText = "";           // 選択中テキストのキャッシュを消す
+        statusLabel.innerText = "";  // ステータス表示を消す
+    }
+
+    function clearHighlights() {
+        document.querySelectorAll('.word-span').forEach(s => s.classList.remove('highlight'));
+    }
+
+    function handlePlay() {
+        const selection = window.getSelection().toString().trim();
+        if (selection) {
+            speakText(selection, true);
+        } else {
+            speakText(textInput.value, false);
+        }
+    }
+
+    function speakText(text, isPartial) {
+        synth.cancel();
+        isManualStop = false;
+        
+        if (!text.trim()) return;
+
+        setTimeout(() => {
+            const utterance = new SpeechSynthesisUtterance(text);
+            
+            if (!currentVoice) currentVoice = selectBestUSVoice();
+            if (currentVoice) {
+                utterance.voice = currentVoice;
+                utterance.lang = currentVoice.lang;
+            } else {
+                utterance.lang = 'en-US';
+            }
+
+            // スライダーの値（0.1〜1.5）をそのまま適用
+            utterance.rate = parseFloat(document.getElementById('speed-range').value);
+            utterance.pitch = 1.03; 
+
+            if (!isPartial) {
+                utterance.onboundary = (event) => {
+                    if (event.name === 'word') {
+                        clearHighlights();
+                        const spans = document.querySelectorAll('.word-span');
+                        for (let span of spans) {
+                            if (parseInt(span.dataset.start) === event.charIndex) {
+                                span.classList.add('highlight');
+                                break;
+                            }
+                        }
+                    }
+                };
+            }
+
+            utterance.onend = () => {
+                clearHighlights();
+                if (repeatCheck.checked && !isManualStop) {
+                    setTimeout(() => speakText(text, isPartial), 600);
+                }
+            };
+
+            utterance.onerror = (e) => {
+                console.error("SpeechSynthesis Error:", e);
+            };
+
+            synth.speak(utterance);
+        }, 50);
+    }
+
+    window.onload = () => {
+        initDisplay();
+        setTimeout(updateVoiceStatus, 200);
+    };
+</script>
+
+</body>
+</html>
